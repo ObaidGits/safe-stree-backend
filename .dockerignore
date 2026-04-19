@@ -1,0 +1,10 @@
+.git
+.gitignore
+.vscode
+.env*
+README.md
+*.md
+ml
+api/node_modules
+api/logs
+api/public/temp
