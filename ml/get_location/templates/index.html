@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Location Capture</title>
+</head>
+<body>
+<script>
+navigator.geolocation.getCurrentPosition(
+  (pos) => {
+    fetch('/submit_location', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy: pos.coords.accuracy
+      })
+    }).then(() => window.close());
+  },
+  (err) => {
+    alert('Permission denied or error getting location');
+    window.close();
+  },
+  { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+);
+</script>
+</body>
+</html>

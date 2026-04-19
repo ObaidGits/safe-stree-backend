@@ -1,0 +1,75 @@
+name: safestree-backend
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: safestree-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - backend-net
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: safestree-api
+    restart: unless-stopped
+    env_file:
+      - ./api/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      DB_NAME: SafeStree
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./api/logs:/app/logs
+      - ./api/public:/app/public
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+  ml:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: safestree-ml
+    restart: unless-stopped
+    env_file:
+      - ./ml/.env
+    environment:
+      ENABLE_DISPLAY: "0"
+      ENABLE_VOICE_SOS: "0"
+      MAX_CAMERA_INDEX: "4"
+      BACKEND_URL: "http://api:8000"
+      CCTV_SOS_ENDPOINT: "http://api:8000/api/v1/cctv"
+      CCTV_INTERNAL_ENDPOINT: "http://api:8000/api/v1/cctv/internal"
+    volumes:
+      - ./ml/data:/app/data
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - backend-net
+    devices:
+      - /dev/video0:/dev/video0
+    profiles:
+      - ml-container
+
+volumes:
+  mongo_data:
+
+networks:
+  backend-net:
+    driver: bridge

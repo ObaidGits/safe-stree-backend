@@ -1,0 +1,10 @@
+__pycache__/
+FILE_*
+logs
+*.pyc
+data-shuttle-transformed.json
+data-easi.json
+old/
+.vscode/
+.env
+venv
