@@ -9,6 +9,24 @@ DB_NAME = "data/cache/location_cache.db"
 MAX_LOCATION_AGE_SECONDS = int(os.environ.get("LOCATION_CACHE_MAX_AGE_SECONDS", "300"))
 
 
+def _env_location_fallback():
+    latitude = os.environ.get("ML_CAMERA_LATITUDE", "").strip()
+    longitude = os.environ.get("ML_CAMERA_LONGITUDE", "").strip()
+    if not latitude or not longitude:
+        return None
+
+    accuracy = os.environ.get("ML_CAMERA_ACCURACY", "0").strip() or "0"
+    try:
+        return {
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "accuracy": float(accuracy),
+        }
+    except ValueError:
+        print("[DB] Ignoring invalid ML_CAMERA_LATITUDE/ML_CAMERA_LONGITUDE fallback")
+        return None
+
+
 def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
@@ -71,14 +89,17 @@ def get_last_location():
 
         if not row:
             print("[DB] No cached location found")
+            fallback = _env_location_fallback()
+            if fallback is not None:
+                print("[DB] Using ML_CAMERA_* fallback location")
+                return fallback
             return None
 
         timestamp = row[3] or 0
         if MAX_LOCATION_AGE_SECONDS > 0:
             age_seconds = int(time.time()) - int(timestamp)
             if age_seconds > MAX_LOCATION_AGE_SECONDS:
-                print(f"[DB] Cached location is stale ({age_seconds}s old). Ignoring.")
-                return None
+                print(f"[DB] Cached location is stale ({age_seconds}s old). Using last known coordinates.")
 
         return {
             "latitude": row[0],

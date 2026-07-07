@@ -7,10 +7,11 @@
   "scripts": {
     "dev": "nodemon -r dotenv/config app.js",
     "start": "node app.js",
-    "test": "NODE_ENV=test jest --coverage",
+    "test": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --runInBand --coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
     "seed": "node scripts/seed.js",
+    "test:cctv-metadata": "node scripts/test_cctv_metadata.js",
     "clean-logs": "rm -rf logs/*",
     "docker:build": "docker build -t safestree-backend .",
     "docker:run": "docker run -p 8000:8000 safestree-backend",

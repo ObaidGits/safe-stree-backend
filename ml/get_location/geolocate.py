@@ -8,6 +8,7 @@ import threading
 import webbrowser
 import time
 import logging
+import os
 
 location_data = {}
 app = Flask(__name__)
@@ -50,6 +51,18 @@ def get_browser_location(timeout_seconds=12):
 
     global location_data
     location_data = {}
+
+    latitude = os.environ.get("ML_CAMERA_LATITUDE", "").strip()
+    longitude = os.environ.get("ML_CAMERA_LONGITUDE", "").strip()
+    if latitude and longitude:
+        try:
+            return {
+                "latitude": float(latitude),
+                "longitude": float(longitude),
+                "accuracy": float(os.environ.get("ML_CAMERA_ACCURACY", "0") or 0),
+            }
+        except ValueError:
+            logging.warning("Invalid ML_CAMERA_* fallback coordinates; falling back to browser geolocation")
 
     # Start flask in background
     threading.Thread(target=run_server, daemon=True).start()

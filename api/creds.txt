@@ -1,0 +1,14 @@
+SafeStree Dev Credentials
+Generated At: 2026-07-06T10:15:56.698Z
+
+USER
+Full Name: Rashi Sharma
+Username: rashi_sharma
+Email: rashi.sharma@safestree.local
+Password: User@1234
+
+ADMIN
+Officer Name: Inspector Priya Verma
+Email: priya.verma@safestree.local
+Password: Admin@1234
+Police Station: Civil Lines Police Station

@@ -7,6 +7,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { logSecurityEvent } from "../utils/logger.js";
+import { removeCCTVImage } from "../utils/cctvAlertMetadata.js";
 
 const parsePagination = (query) => {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
@@ -39,6 +40,121 @@ const normalizeMedicalConditions = (value) => {
 
   return [];
 };
+
+const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const parseAlertKind = (value) => {
+  const kind = String(value || "all").trim().toLowerCase();
+  if (kind === "web" || kind === "cctv") return kind;
+  return "all";
+};
+
+const parseAlertStatus = (value) => {
+  const status = String(value || "all").trim().toLowerCase();
+  if (status === "active" || status === "resolved") return status;
+  return "all";
+};
+
+const buildRegexSearch = (search) => {
+  const normalized = String(search || "").trim();
+  if (!normalized) return null;
+  return new RegExp(escapeRegex(normalized), "i");
+};
+
+const buildAlertPagination = (page, limit, total) => ({
+  page,
+  limit,
+  total,
+  pages: Math.ceil(total / limit),
+});
+
+const buildWebAlertSearchStage = (searchRegex) => {
+  if (!searchRegex) return {};
+
+  return {
+    $or: [
+      { _idString: searchRegex },
+      { liveAddress: searchRegex },
+      { status: searchRegex },
+      { "userId.fullName": searchRegex },
+      { "userId.username": searchRegex },
+      { "userId.email": searchRegex },
+      { "userId.contact": searchRegex },
+      { "userId.address": searchRegex },
+      { "userId.city": searchRegex },
+      { "userId.state": searchRegex },
+      { "userId.pincode": searchRegex },
+    ],
+  };
+};
+
+const buildCCTVAlertSearchStage = (searchRegex) => {
+  if (!searchRegex) return {};
+
+  return {
+    $or: [
+      { _idString: searchRegex },
+      { eventId: searchRegex },
+      { source: searchRegex },
+      { ingestSource: searchRegex },
+      { cameraId: searchRegex },
+      { cameraName: searchRegex },
+      { cameraLocationLabel: searchRegex },
+      { triggerType: searchRegex },
+      { triggerLabel: searchRegex },
+      { triggerReason: searchRegex },
+      { gestureLabel: searchRegex },
+      { voiceMatchedPhrase: searchRegex },
+      { status: searchRegex },
+      { sos_img: searchRegex },
+    ],
+  };
+};
+
+const buildWebAlertPipeline = ({ status, searchRegex }) => {
+  const pipeline = [{ $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "userId" } }];
+
+  pipeline.push({ $unwind: { path: "$userId", preserveNullAndEmptyArrays: true } });
+  pipeline.push({ $addFields: { _idString: { $toString: "$_id" } } });
+
+  if (status !== "all") {
+    pipeline.unshift({ $match: { status } });
+  }
+
+  const searchStage = buildWebAlertSearchStage(searchRegex);
+  if (Object.keys(searchStage).length) {
+    pipeline.push({ $match: searchStage });
+  }
+
+  return pipeline;
+};
+
+const buildCCTVAlertPipeline = ({ status, searchRegex }) => {
+  const pipeline = [{ $addFields: { _idString: { $toString: "$_id" } } }];
+
+  if (status !== "all") {
+    pipeline.unshift({ $match: { status } });
+  }
+
+  const searchStage = buildCCTVAlertSearchStage(searchRegex);
+  if (Object.keys(searchStage).length) {
+    pipeline.push({ $match: searchStage });
+  }
+
+  return pipeline;
+};
+
+const buildWebAlertResponse = (alert) => ({
+  ...alert,
+  kind: "web",
+  source: "Web",
+});
+
+const buildCCTVAlertResponse = (alert) => ({
+  ...alert,
+  kind: "cctv",
+  source: alert.source || "CCTV",
+});
 
 export const getManagementOverview = asyncHandler(async (req, res) => {
   const [
@@ -87,6 +203,127 @@ export const getManagementOverview = asyncHandler(async (req, res) => {
       },
     }, "Management overview fetched successfully")
   );
+});
+
+export const getManagedAlerts = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = parsePagination(req.query);
+  const searchRegex = buildRegexSearch(req.query.search);
+  const status = parseAlertStatus(req.query.status);
+  const kind = parseAlertKind(req.query.kind);
+
+  const webPipeline = buildWebAlertPipeline({ status, searchRegex });
+  const cctvPipeline = buildCCTVAlertPipeline({ status, searchRegex });
+
+  if (kind === "web") {
+    const [alerts, countResult] = await Promise.all([
+      SOSAlert.aggregate([...webPipeline, { $sort: { createdAt: -1 } }, { $skip: skip }, { $limit: limit }]),
+      SOSAlert.aggregate([...webPipeline, { $count: "count" }]),
+    ]);
+
+    const total = countResult[0]?.count || 0;
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          alerts: alerts.map(buildWebAlertResponse),
+          pagination: buildAlertPagination(page, limit, total),
+          filters: { search: req.query.search || "", status, kind },
+        },
+        "Web SOS alerts fetched successfully"
+      )
+    );
+  }
+
+  if (kind === "cctv") {
+    const [alerts, countResult] = await Promise.all([
+      CCTVSOSAlert.aggregate([...cctvPipeline, { $sort: { createdAt: -1 } }, { $skip: skip }, { $limit: limit }]),
+      CCTVSOSAlert.aggregate([...cctvPipeline, { $count: "count" }]),
+    ]);
+
+    const total = countResult[0]?.count || 0;
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          alerts: alerts.map(buildCCTVAlertResponse),
+          pagination: buildAlertPagination(page, limit, total),
+          filters: { search: req.query.search || "", status, kind },
+        },
+        "CCTV SOS alerts fetched successfully"
+      )
+    );
+  }
+
+  const [webAlerts, webCountResult, cctvAlerts, cctvCountResult] = await Promise.all([
+    SOSAlert.aggregate([...webPipeline, { $sort: { createdAt: -1 } }]),
+    SOSAlert.aggregate([...webPipeline, { $count: "count" }]),
+    CCTVSOSAlert.aggregate([...cctvPipeline, { $sort: { createdAt: -1 } }]),
+    CCTVSOSAlert.aggregate([...cctvPipeline, { $count: "count" }]),
+  ]);
+
+  const combinedAlerts = [...webAlerts.map(buildWebAlertResponse), ...cctvAlerts.map(buildCCTVAlertResponse)]
+    .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
+
+  const total = (webCountResult[0]?.count || 0) + (cctvCountResult[0]?.count || 0);
+  const paginatedAlerts = combinedAlerts.slice(skip, skip + limit);
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        alerts: paginatedAlerts,
+        pagination: buildAlertPagination(page, limit, total),
+        filters: { search: req.query.search || "", status, kind },
+      },
+      "SOS alerts fetched successfully"
+    )
+  );
+});
+
+export const deleteManagedAlert = asyncHandler(async (req, res) => {
+  const { alertId, kind } = req.params;
+  const normalizedKind = parseAlertKind(kind);
+
+  if (!mongoose.Types.ObjectId.isValid(alertId)) {
+    throw new ApiError(400, "Invalid alertId format");
+  }
+
+  if (normalizedKind === "web") {
+    const alert = await SOSAlert.findByIdAndDelete(alertId);
+    if (!alert) {
+      throw new ApiError(404, "Web SOS alert not found");
+    }
+
+    logSecurityEvent("MANAGED_ALERT_DELETED", {
+      alertType: "WEB",
+      alertId: alert._id,
+      byAdminId: req.admin._id,
+      ip: req.ip,
+    });
+
+    return res.status(200).json(new ApiResponse(200, { alertId: alert._id, kind: "web" }, "Web SOS alert deleted successfully"));
+  }
+
+  if (normalizedKind === "cctv") {
+    const alert = await CCTVSOSAlert.findByIdAndDelete(alertId);
+    if (!alert) {
+      throw new ApiError(404, "CCTV SOS alert not found");
+    }
+
+    await removeCCTVImage(alert.sos_img);
+
+    logSecurityEvent("MANAGED_ALERT_DELETED", {
+      alertType: "CCTV",
+      alertId: alert._id,
+      byAdminId: req.admin._id,
+      ip: req.ip,
+      eventId: alert.eventId || null,
+    });
+
+    return res.status(200).json(new ApiResponse(200, { alertId: alert._id, kind: "cctv" }, "CCTV SOS alert deleted successfully"));
+  }
+
+  throw new ApiError(400, "Unsupported alert kind");
 });
 
 export const getManagedUsers = asyncHandler(async (req, res) => {

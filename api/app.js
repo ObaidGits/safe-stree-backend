@@ -119,26 +119,31 @@ app.use((err, req, res, next) => {
   });
 });
 
+export { app };
+export default app;
+
 // ---------- SOCKET SERVER ----------
 const httpServer = createServer(app);
 
 // ---------- BOOT ----------
-connectDB()
-  .then(() => {
-    // Initialize Socket.IO after DB connection
-    initializeSocket(httpServer, allowedOrigins);
-    
-    const PORT = process.env.PORT || 8000;
-    httpServer.listen(PORT, () => {
-      logger.info(`✅ Server started on port ${PORT}`);
-      console.log(`✅ Server running on port ${PORT}`);
+if (process.env.NODE_ENV !== "test") {
+  connectDB()
+    .then(() => {
+      // Initialize Socket.IO after DB connection
+      initializeSocket(httpServer, allowedOrigins);
+
+      const PORT = process.env.PORT || 8000;
+      httpServer.listen(PORT, () => {
+        logger.info(`✅ Server started on port ${PORT}`);
+        console.log(`✅ Server running on port ${PORT}`);
+      });
+    })
+    .catch((err) => {
+      logger.error("MongoDB connection failed", { error: err.message });
+      console.error("❌ MongoDB failed!", err);
+      process.exit(1);
     });
-  })
-  .catch((err) => {
-    logger.error("MongoDB connection failed", { error: err.message });
-    console.error("❌ MongoDB failed!", err);
-    process.exit(1);
-  });
+}
 
 // ---------- GRACEFUL SHUTDOWN ----------
 process.on("SIGTERM", () => {

@@ -3,8 +3,12 @@ import { CCTVSOSAlert } from "../models/cctvsos.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { logSOSAlert } from "../utils/logger.js";
-import mongoose from "mongoose";
+import { logSOSAlert, logSecurityEvent } from "../utils/logger.js";
+import {
+  buildCCTVAlertDocument,
+  buildCCTVAlertLogContext,
+  removeCCTVImage,
+} from "../utils/cctvAlertMetadata.js";
 
 /**
  * Create CCTV SOS Alert
@@ -12,38 +16,115 @@ import mongoose from "mongoose";
  * Protected by API Key (for ML backend)
  */
 export const createCCTVSOS = asyncHandler(async (req, res) => {
-  const { longitude, latitude, accuracy } = req.body;
   const sos_img = req.savedFileName;
 
   if (!sos_img) {
     throw new ApiError(400, "SOS image not received");
   }
 
-  const alert = await CCTVSOSAlert.create({
-    location: {
-      type: "Point",
-      coordinates: [parseFloat(longitude), parseFloat(latitude)],
-      accuracy: accuracy ? parseFloat(accuracy) : undefined,
-    },
-    sos_img,
+  const ingestSource = req.internalService?.name || req.body?.source || "backend_ml";
+  const alertDocument = buildCCTVAlertDocument({
+    body: req.body,
+    savedFileName: sos_img,
+    ingestSource,
   });
+
+  const [longitude, latitude] = alertDocument?.location?.coordinates || [];
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+    await removeCCTVImage(sos_img);
+    throw new ApiError(400, "Invalid CCTV alert location");
+  }
+
+  if (alertDocument.eventId) {
+    const existingAlert = await CCTVSOSAlert.findOne({ eventId: alertDocument.eventId });
+    if (existingAlert) {
+      await removeCCTVImage(sos_img);
+      logSecurityEvent("SOS_ALERT_DUPLICATE", {
+        alertType: "CCTV",
+        alertId: existingAlert._id,
+        eventId: alertDocument.eventId,
+        ingestSource,
+        triggerType: existingAlert.triggerType || alertDocument.triggerType || null,
+        cameraId: existingAlert.cameraId || alertDocument.cameraId || null,
+        timestamp: new Date().toISOString(),
+      });
+
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            alertId: existingAlert._id,
+            duplicate: true,
+            eventId: alertDocument.eventId,
+          },
+          "CCTV SOS alert already recorded"
+        )
+      );
+    }
+  }
+
+  let alert;
+
+  try {
+    alert = await CCTVSOSAlert.create(alertDocument);
+  } catch (error) {
+    if (error?.code === 11000 && alertDocument.eventId) {
+      await removeCCTVImage(sos_img);
+
+      const existingAlert = await CCTVSOSAlert.findOne({ eventId: alertDocument.eventId });
+      if (existingAlert) {
+        logSecurityEvent("SOS_ALERT_DUPLICATE", {
+          alertType: "CCTV",
+          alertId: existingAlert._id,
+          eventId: alertDocument.eventId,
+          ingestSource,
+          triggerType: existingAlert.triggerType || alertDocument.triggerType || null,
+          cameraId: existingAlert.cameraId || alertDocument.cameraId || null,
+          timestamp: new Date().toISOString(),
+        });
+
+        return res.status(200).json(
+          new ApiResponse(
+            200,
+            {
+              alertId: existingAlert._id,
+              duplicate: true,
+              eventId: alertDocument.eventId,
+            },
+            "CCTV SOS alert already recorded"
+          )
+        );
+      }
+    }
+
+    await removeCCTVImage(sos_img);
+    throw error;
+  }
 
   if (!alert) {
     throw new ApiError(500, "Failed to save CCTV SOS alert");
   }
 
-  // Log for audit trail
-  logSOSAlert("CCTV", alert._id, { longitude, latitude, accuracy });
+  // Log for audit trail with the sanitized evidence summary
+  logSOSAlert("CCTV", alert._id, buildCCTVAlertLogContext(alert), req.internalService?.name || null);
 
   broadcastNewAlert({
     ...alert.toObject(),
     userId: null,
-    source: "CCTV",
   });
 
   return res
     .status(201)
-    .json(new ApiResponse(201, { alertId: alert._id }, "CCTV SOS submitted successfully"));
+    .json(
+      new ApiResponse(
+        201,
+        {
+          alertId: alert._id,
+          eventId: alert.eventId || null,
+        },
+        "CCTV SOS submitted successfully"
+      )
+    );
 });
 
 /**

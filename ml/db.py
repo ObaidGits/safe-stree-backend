@@ -105,38 +105,78 @@ Database and API Communication Module
 Handles sending SOS alerts to backend with location and image data
 """
 
-import requests
+import json
 import os
-from dotenv import load_dotenv
+
+import requests
+
+from config import (
+    CCTV_API_KEY,
+    CCTV_INTERNAL_ENDPOINT,
+    CCTV_INTERNAL_SERVICE_NAME,
+    CCTV_INTERNAL_SERVICE_TOKEN,
+    CCTV_SOS_ENDPOINT,
+)
 from location_cache import get_last_location
 
-# Load environment variables from .env file
-load_dotenv()
+def _serialize_metadata_value(value):
+    if value is None:
+        return None
 
-# API Configuration
-CCTV_INTERNAL_ENDPOINT = os.environ.get("CCTV_INTERNAL_ENDPOINT", "")
-CCTV_INTERNAL_SERVICE_TOKEN = os.environ.get("CCTV_INTERNAL_SERVICE_TOKEN")
-CCTV_INTERNAL_SERVICE_NAME = os.environ.get("CCTV_INTERNAL_SERVICE_NAME", "backend_ml")
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, separators=(",", ":"))
+
+    return str(value)
 
 
-def send_sos_to_cctv_route(image_path=None):
+def _merge_metadata(data, metadata):
+    if not metadata:
+        return data
+
+    for key, value in metadata.items():
+        serialized = _serialize_metadata_value(value)
+        if serialized is not None:
+            data[key] = serialized
+
+    return data
+
+
+def send_sos_to_cctv_route(image_path=None, metadata=None):
     """
     Send SOS alert to backend with image and location.
-    Uses only internal service token auth.
+    Prefers internal service token auth, with legacy API-key fallback.
     """
-    if not CCTV_INTERNAL_ENDPOINT or not CCTV_INTERNAL_SERVICE_TOKEN:
+    auth_profiles = []
+
+    if CCTV_INTERNAL_ENDPOINT and CCTV_INTERNAL_SERVICE_TOKEN:
+        auth_profiles.append({
+            "endpoint": CCTV_INTERNAL_ENDPOINT,
+            "headers": {
+                "X-Internal-Service-Token": CCTV_INTERNAL_SERVICE_TOKEN,
+                "X-Internal-Service-Name": CCTV_INTERNAL_SERVICE_NAME,
+            },
+            "mode": "internal-token",
+        })
+
+    if CCTV_SOS_ENDPOINT and CCTV_API_KEY:
+        auth_profiles.append({
+            "endpoint": CCTV_SOS_ENDPOINT,
+            "headers": {
+                "X-API-Key": CCTV_API_KEY,
+            },
+            "mode": "legacy-api-key",
+        })
+
+    if not auth_profiles:
         print(
-            "[AUTH ERROR] Internal service auth is required. "
-            "Set CCTV_INTERNAL_ENDPOINT + CCTV_INTERNAL_SERVICE_TOKEN."
+            "[AUTH ERROR] CCTV auth is not configured. "
+            "Set CCTV_INTERNAL_ENDPOINT + CCTV_INTERNAL_SERVICE_TOKEN "
+            "or CCTV_SOS_ENDPOINT + CCTV_API_KEY."
         )
         return False
-
-    endpoint = CCTV_INTERNAL_ENDPOINT
-    headers = {
-        "X-Internal-Service-Token": CCTV_INTERNAL_SERVICE_TOKEN,
-        "X-Internal-Service-Name": CCTV_INTERNAL_SERVICE_NAME,
-    }
-    auth_mode = "internal-token"
 
     location = get_last_location()
     if not location:
@@ -148,6 +188,7 @@ def send_sos_to_cctv_route(image_path=None):
         "longitude": str(location["longitude"]),
         "accuracy": str(location.get("accuracy", 0)),
     }
+    _merge_metadata(data, metadata)
 
     image_path = image_path or os.path.join(os.path.dirname(__file__), "sos_alert.jpg")
     if not os.path.isfile(image_path):
@@ -173,26 +214,36 @@ def send_sos_to_cctv_route(image_path=None):
             )
 
     try:
-        response = submit_request(endpoint, headers)
+        last_error = None
 
-        if response.status_code == 201:
-            print("[SUCCESS] SOS Alert submitted via CCTV route with image.")
-            return True
-        elif response.status_code == 401:
-            print(f"[AUTH ERROR] Missing credentials for {auth_mode}.")
-            return False
-        elif response.status_code == 403:
-            print(f"[AUTH ERROR] Credentials rejected for {auth_mode}.")
-            return False
-        elif response.status_code == 429:
-            print("[RATE LIMIT] Too many SOS alerts. Please wait.")
-            return False
-        else:
+        for profile in auth_profiles:
+            response = submit_request(profile["endpoint"], profile["headers"])
+
+            if 200 <= response.status_code < 300:
+                print(f"[SUCCESS] SOS Alert submitted via CCTV route ({profile['mode']}).")
+                return True
+
+            if response.status_code in {401, 403}:
+                print(
+                    f"[AUTH ERROR] CCTV auth rejected for {profile['mode']}. "
+                    "Trying next configured route if available."
+                )
+                last_error = response
+                continue
+
+            if response.status_code == 429:
+                print("[RATE LIMIT] Too many SOS alerts. Please wait.")
+                return False
+
             print(
-                f"[ERROR] Failed to submit SOS. "
+                f"[ERROR] Failed to submit SOS via {profile['mode']}. "
                 f"Status: {response.status_code}, Response: {response.text}"
             )
-            return False
+            last_error = response
+
+        if last_error is not None:
+            print("[ERROR] All configured CCTV routes failed.")
+        return False
 
     except requests.exceptions.Timeout:
         print("[Request Error] Connection timed out.")

@@ -7,6 +7,8 @@ import {
 } from "../controllers/admin.controller.js";
 import {
   createManagedAdmin,
+  deleteManagedAlert,
+  getManagedAlerts,
   getManagedAdmins,
   getManagedUsers,
   getManagementOverview,
@@ -60,6 +62,13 @@ router.post("/current-admin", verifyJWT, getCurrentAdmin);
  * PROTECTED (Admin only)
  */
 router.get("/management/overview", verifyJWT, requireAdmin, getManagementOverview);
+router.get("/management/alerts", verifyJWT, requireAdmin, getManagedAlerts);
+router.delete(
+  "/management/alerts/:kind/:alertId",
+  verifyJWT,
+  requireAdmin,
+  deleteManagedAlert
+);
 
 /**
  * User Management

@@ -83,11 +83,11 @@ export const logSecurityEvent = (event, data) => {
 /**
  * Log SOS alert creation
  */
-export const logSOSAlert = (alertType, alertId, location, userId = null) => {
+export const logSOSAlert = (alertType, alertId, context = {}, userId = null) => {
   securityLogger.warn("SOS_ALERT_CREATED", {
     alertType,
     alertId,
-    location,
+    context,
     userId,
     timestamp: new Date().toISOString(),
   });

@@ -1,16 +1,28 @@
 import { body, param, validationResult } from "express-validator";
 import { ApiError } from "../utils/ApiError.js";
+import { removeCCTVImage } from "../utils/cctvAlertMetadata.js";
 
 /**
  * Middleware to check validation results
  */
-export const validate = (req, res, next) => {
+export const validate = async (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    if (req.savedFileName) {
+      try {
+        await removeCCTVImage(req.savedFileName);
+      } catch (cleanupError) {
+        console.warn("Failed to clean up invalid CCTV upload", {
+          fileName: req.savedFileName,
+          error: cleanupError?.message || cleanupError,
+        });
+      }
+    }
+
     const messages = errors.array().map((e) => e.msg);
     throw new ApiError(400, messages.join(", "));
   }
-  next();
+  return next();
 };
 
 /**
@@ -115,8 +127,460 @@ export const sosRules = [
     .isFloat({ min: -90, max: 90 }).withMessage("Latitude must be between -90 and 90"),
   
   body("accuracy")
-    .optional()
+    .optional({ values: "falsy" })
     .isFloat({ min: 0 }).withMessage("Accuracy must be a positive number"),
+];
+
+const isJsonObjectValue = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return true;
+  }
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return true;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+};
+
+const isJsonArrayValue = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return true;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+};
+
+const hasContent = (value) =>
+  value !== undefined &&
+  value !== null &&
+  !(typeof value === "string" && value.trim() === "");
+
+const parseMaybeJsonObject = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const hasCctvLocation = (req) => {
+  const hasFlatLocation = hasContent(req.body?.longitude) && hasContent(req.body?.latitude);
+  if (hasFlatLocation) {
+    return true;
+  }
+
+  const mlPayload = parseMaybeJsonObject(req.body?.ml);
+  const mlLocation = mlPayload && typeof mlPayload === "object" ? mlPayload.location : undefined;
+  if (!mlLocation || typeof mlLocation !== "object") {
+    return false;
+  }
+
+  const coordinates = Array.isArray(mlLocation.coordinates) ? mlLocation.coordinates : [];
+  const hasNestedCoordinates =
+    hasContent(coordinates[0]) && hasContent(coordinates[1]);
+  const hasNestedLatLng =
+    hasContent(mlLocation.longitude) &&
+    hasContent(mlLocation.latitude);
+
+  return hasNestedCoordinates || hasNestedLatLng;
+};
+
+/**
+ * CCTV SOS metadata validation rules
+ * Accepts the richer ML payload while remaining backward-compatible with old alerts.
+ */
+export const cctvSosRules = [
+  body()
+    .custom((_, { req }) => {
+      if (hasCctvLocation(req)) {
+        return true;
+      }
+      throw new Error("Either flat coordinates or ml.location must be provided");
+    }),
+
+  body("longitude")
+    .optional({ values: "falsy" })
+    .isFloat({ min: -180, max: 180 }).withMessage("Longitude must be between -180 and 180"),
+
+  body("latitude")
+    .optional({ values: "falsy" })
+    .isFloat({ min: -90, max: 90 }).withMessage("Latitude must be between -90 and 90"),
+
+  body("accuracy")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0 }).withMessage("Accuracy must be a positive number"),
+
+  body("eventId")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ min: 8, max: 200 })
+    .withMessage("eventId must be 8-200 characters"),
+
+  body("source")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ min: 2, max: 64 })
+    .withMessage("source must be 2-64 characters"),
+
+  body("ingestSource")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ min: 2, max: 64 })
+    .withMessage("ingestSource must be 2-64 characters"),
+
+  body("cameraId")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("cameraId must be at most 128 characters"),
+
+  body("cameraName")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("cameraName must be at most 128 characters"),
+
+  body("cameraLocationLabel")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 160 })
+    .withMessage("cameraLocationLabel must be at most 160 characters"),
+
+  body("frameTime")
+    .optional({ values: "falsy" })
+    .isISO8601()
+    .withMessage("frameTime must be a valid ISO timestamp"),
+
+  body("frameNumber")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("frameNumber must be a positive integer"),
+
+  body("fps")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0 })
+    .withMessage("fps must be a positive number"),
+
+  body("triggerType")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("triggerType must be at most 64 characters"),
+
+  body("triggerLabel")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("triggerLabel must be at most 128 characters"),
+
+  body("triggerReason")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 256 })
+    .withMessage("triggerReason must be at most 256 characters"),
+
+  body("triggerConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("triggerConfidence must be between 0 and 1"),
+
+  body("handDetected")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("handDetected must be boolean"),
+
+  body("gestureLabel")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("gestureLabel must be at most 64 characters"),
+
+  body("gestureRawConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("gestureRawConfidence must be between 0 and 1"),
+
+  body("gestureConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("gestureConfidence must be between 0 and 1"),
+
+  body("gestureQualityScore")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("gestureQualityScore must be between 0 and 1"),
+
+  body("gestureWindowCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("gestureWindowCount must be a positive integer"),
+
+  body("gesturePositiveCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("gesturePositiveCount must be a positive integer"),
+
+  body("gestureModelId")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("gestureModelId must be at most 128 characters"),
+
+  body("gestureModelDir")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 256 })
+    .withMessage("gestureModelDir must be at most 256 characters"),
+
+  body("gestureEngine")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("gestureEngine must be at most 64 characters"),
+
+  body("gestureClassifier")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("gestureClassifier must be at most 64 characters"),
+
+  body("voiceDetected")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("voiceDetected must be boolean"),
+
+  body("voiceEventId")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage("voiceEventId must be at most 200 characters"),
+
+  body("voiceTranscript")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 400 })
+    .withMessage("voiceTranscript must be at most 400 characters"),
+
+  body("voiceMatchedPhrase")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage("voiceMatchedPhrase must be at most 200 characters"),
+
+  body("voiceMatchKind")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("voiceMatchKind must be at most 64 characters"),
+
+  body("voiceSource")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("voiceSource must be at most 64 characters"),
+
+  body("voiceModelVersion")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("voiceModelVersion must be at most 128 characters"),
+
+  body("voiceEngine")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("voiceEngine must be at most 64 characters"),
+
+  body("voiceConfidenceRaw")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("voiceConfidenceRaw must be between 0 and 1"),
+
+  body("voiceConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("voiceConfidence must be between 0 and 1"),
+
+  body("voiceRecognitionConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("voiceRecognitionConfidence must be between 0 and 1"),
+
+  body("genderEnabled")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("genderEnabled must be boolean"),
+
+  body("genderReady")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("genderReady must be boolean"),
+
+  body("genderUpdated")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("genderUpdated must be boolean"),
+
+  body("genderDetected")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("genderDetected must be boolean"),
+
+  body("genderEstimate")
+    .optional({ values: "falsy" })
+    .isBoolean()
+    .withMessage("genderEstimate must be boolean"),
+
+  body("genderEngine")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("genderEngine must be at most 64 characters"),
+
+  body("genderModelVersion")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("genderModelVersion must be at most 128 characters"),
+
+  body("faceModelVersion")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 128 })
+    .withMessage("faceModelVersion must be at most 128 characters"),
+
+  body("genderFrameSize")
+    .optional({ values: "falsy" })
+    .custom(isJsonArrayValue)
+    .withMessage("genderFrameSize must be a JSON array"),
+
+  body("genderSkippedReason")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 256 })
+    .withMessage("genderSkippedReason must be at most 256 characters"),
+
+  body("genderEstimateLabel")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("genderEstimateLabel must be at most 64 characters"),
+
+  body("genderSource")
+    .optional({ values: "falsy" })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage("genderSource must be at most 64 characters"),
+
+  body("faceCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("faceCount must be a positive integer"),
+
+  body("maleCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("maleCount must be a positive integer"),
+
+  body("femaleCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("femaleCount must be a positive integer"),
+
+  body("unknownGenderCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("unknownGenderCount must be a positive integer"),
+
+  body("rawFaceCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("rawFaceCount must be a positive integer"),
+
+  body("rawMaleCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("rawMaleCount must be a positive integer"),
+
+  body("rawFemaleCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("rawFemaleCount must be a positive integer"),
+
+  body("rawUnknownGenderCount")
+    .optional({ values: "falsy" })
+    .isInt({ min: 0 })
+    .withMessage("rawUnknownGenderCount must be a positive integer"),
+
+  body("genderAverageFaceConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("genderAverageFaceConfidence must be between 0 and 1"),
+
+  body("genderAverageConfidence")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 1 })
+    .withMessage("genderAverageConfidence must be between 0 and 1"),
+
+  body("genderAverageAge")
+    .optional({ values: "falsy" })
+    .isFloat({ min: 0, max: 120 })
+    .withMessage("genderAverageAge must be between 0 and 120"),
+
+  body("genderFaces")
+    .optional({ values: "falsy" })
+    .custom(isJsonArrayValue)
+    .withMessage("genderFaces must be a JSON array"),
+
+  body("modelVersions")
+    .optional({ values: "falsy" })
+    .custom(isJsonObjectValue)
+    .withMessage("modelVersions must be a JSON object"),
+
+  body("genderContext")
+    .optional({ values: "falsy" })
+    .custom(isJsonObjectValue)
+    .withMessage("genderContext must be a JSON object"),
+
+  body("ml")
+    .optional({ values: "falsy" })
+    .custom(isJsonObjectValue)
+    .withMessage("ml must be a JSON object"),
 ];
 
 /**

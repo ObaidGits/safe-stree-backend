@@ -6,6 +6,21 @@ const userSocketMap = new Map(); // userId -> socketId
 const onlineUsers = new Set(); // Set of online userIds
 const roomParticipants = new Map(); // roomId -> Set of { socketId, role }
 
+const getCookieValue = (cookieHeader, cookieName) => {
+  if (!cookieHeader) return null;
+
+  const cookies = cookieHeader.split(";").map((part) => part.trim());
+  const target = cookies.find((part) => part.startsWith(`${cookieName}=`));
+  if (!target) return null;
+
+  const value = target.slice(cookieName.length + 1);
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
 /**
  * Initialize Socket.IO server with authentication
  * @param {import("http").Server} httpServer - HTTP server instance
@@ -24,8 +39,12 @@ export const initializeSocket = (httpServer, allowedOrigins) => {
 
   // Socket authentication middleware
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
-    
+    const cookieToken = getCookieValue(socket.request?.headers?.cookie, "accessToken");
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.split(" ")[1] ||
+      cookieToken;
+
     // Allow connection but mark as unauthenticated
     if (!token) {
       socket.authenticated = false;
@@ -52,6 +71,11 @@ export const initializeSocket = (httpServer, allowedOrigins) => {
 
   io.on("connection", (socket) => {
     console.log(`🔌 Socket connected: ${socket.id} (Auth: ${socket.authenticated}, Admin: ${socket.isAdmin})`);
+
+    if (socket.authenticated && socket.isAdmin) {
+      socket.join("admins");
+      console.log(`👮 Admin socket joined broadcast room: admins`);
+    }
 
     const emitSocketError = (event, message, code = "UNAUTHORIZED") => {
       socket.emit(event, { error: message, code });
@@ -474,11 +498,7 @@ export const initializeSocket = (httpServer, allowedOrigins) => {
  */
 export const broadcastNewAlert = (alert) => {
   if (io) {
-    io.sockets.sockets.forEach((clientSocket) => {
-      if (clientSocket.authenticated && clientSocket.isAdmin) {
-        clientSocket.emit("new_alert", alert);
-      }
-    });
+    io.to("admins").emit("new_alert", alert);
     console.log(`🚨 Alert broadcast: ${alert._id || "new"}`);
   } else {
     console.error("Socket.IO not initialized - cannot broadcast alert");

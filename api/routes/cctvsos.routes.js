@@ -10,7 +10,7 @@ import { verifyApiKey } from "../middlewares/apiKey.middleware.js";
 import { verifyInternalService } from "../middlewares/internalService.middleware.js";
 import { requireAdmin, verifyJWT } from "../middlewares/auth.middleware.js";
 import { sosLimiter } from "../middlewares/rateLimit.middleware.js";
-import { sosRules, objectIdRule, validate } from "../middlewares/validation.middleware.js";
+import { cctvSosRules, objectIdRule, validate } from "../middlewares/validation.middleware.js";
 
 const router = express.Router();
 
@@ -24,7 +24,7 @@ router.post(
   verifyApiKey,
   sosLimiter,
   uploadCCTVSOS.single("sos_img"),
-  sosRules,
+  cctvSosRules,
   validate,
   createCCTVSOS
 );
@@ -38,7 +38,7 @@ router.post(
   verifyInternalService,
   sosLimiter,
   uploadCCTVSOS.single("sos_img"),
-  sosRules,
+  cctvSosRules,
   validate,
   createCCTVSOS
 );
