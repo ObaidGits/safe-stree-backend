@@ -326,6 +326,77 @@ export const deleteManagedAlert = asyncHandler(async (req, res) => {
   throw new ApiError(400, "Unsupported alert kind");
 });
 
+export const bulkDeleteManagedAlerts = asyncHandler(async (req, res) => {
+  const rawAlerts = Array.isArray(req.body?.alerts) ? req.body.alerts : [];
+
+  if (!rawAlerts.length) {
+    throw new ApiError(400, "No alerts provided for deletion");
+  }
+
+  if (rawAlerts.length > 200) {
+    throw new ApiError(400, "Cannot delete more than 200 alerts in a single request");
+  }
+
+  // Group valid ids by kind, de-duplicated.
+  const webIds = new Set();
+  const cctvIds = new Set();
+  const invalid = [];
+
+  for (const item of rawAlerts) {
+    const alertId = item?.alertId || item?.id;
+    const normalizedKind = parseAlertKind(item?.kind);
+
+    if (!mongoose.Types.ObjectId.isValid(alertId) || normalizedKind === "all") {
+      invalid.push({ kind: item?.kind ?? null, alertId: alertId ?? null });
+      continue;
+    }
+
+    if (normalizedKind === "web") webIds.add(String(alertId));
+    else if (normalizedKind === "cctv") cctvIds.add(String(alertId));
+  }
+
+  if (!webIds.size && !cctvIds.size) {
+    throw new ApiError(400, "No valid alerts provided for deletion");
+  }
+
+  let webDeleted = 0;
+  let cctvDeleted = 0;
+
+  if (webIds.size) {
+    const result = await SOSAlert.deleteMany({ _id: { $in: [...webIds] } });
+    webDeleted = result?.deletedCount || 0;
+  }
+
+  if (cctvIds.size) {
+    // Fetch first so we can clean up stored images before removing the records.
+    const cctvAlerts = await CCTVSOSAlert.find({ _id: { $in: [...cctvIds] } });
+    await Promise.all(
+      cctvAlerts.map((alert) => removeCCTVImage(alert.sos_img).catch(() => {}))
+    );
+    const result = await CCTVSOSAlert.deleteMany({ _id: { $in: [...cctvIds] } });
+    cctvDeleted = result?.deletedCount || 0;
+  }
+
+  const totalDeleted = webDeleted + cctvDeleted;
+
+  logSecurityEvent("MANAGED_ALERTS_BULK_DELETED", {
+    totalDeleted,
+    webDeleted,
+    cctvDeleted,
+    invalidCount: invalid.length,
+    byAdminId: req.admin._id,
+    ip: req.ip,
+  });
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      { totalDeleted, webDeleted, cctvDeleted, invalid },
+      `Deleted ${totalDeleted} SOS alert${totalDeleted === 1 ? "" : "s"} successfully`
+    )
+  );
+});
+
 export const getManagedUsers = asyncHandler(async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
   const search = (req.query.search || "").trim();

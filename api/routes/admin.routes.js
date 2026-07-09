@@ -6,6 +6,7 @@ import {
   registerAdmin
 } from "../controllers/admin.controller.js";
 import {
+  bulkDeleteManagedAlerts,
   createManagedAdmin,
   deleteManagedAlert,
   getManagedAlerts,
@@ -63,6 +64,12 @@ router.post("/current-admin", verifyJWT, getCurrentAdmin);
  */
 router.get("/management/overview", verifyJWT, requireAdmin, getManagementOverview);
 router.get("/management/alerts", verifyJWT, requireAdmin, getManagedAlerts);
+router.post(
+  "/management/alerts/bulk-delete",
+  verifyJWT,
+  requireAdmin,
+  bulkDeleteManagedAlerts
+);
 router.delete(
   "/management/alerts/:kind/:alertId",
   verifyJWT,

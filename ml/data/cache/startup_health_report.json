@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-07T12:19:15.230536Z",
+  "generatedAt": "2026-07-09T14:43:46.658243Z",
   "status": "healthy",
   "components": [
     {
@@ -24,15 +24,15 @@
       "ready": true,
       "state": "ready",
       "blocking": false,
-      "message": "Gesture engine=legacy_opencv ready",
-      "setupHint": "Gesture model: set GESTURE_ACTIVE_MODEL / GESTURE_ENGINE; run python scripts/train_gesture_landmarks.py --wizard --labels SOS,NEGATIVE --samples 160 --negative-samples 250",
+      "message": "Gesture engine=mediapipe_landmark ready",
+      "setupHint": "Gesture model: path=/media/obaid/SSD/my-files/My All Projects/safe-stree-final-2026/backend/ml/data/models/gestures/gesture_knn_20260709_144049; set GESTURE_ACTIVE_MODEL / GESTURE_ENGINE; run python scripts/train_gesture_landmarks.py --wizard --labels SOS,NEGATIVE --samples 160 --negative-samples 250",
       "details": {
         "enabled": true,
         "ready": true,
-        "engine": "legacy_opencv",
-        "modelId": "",
-        "modelDir": "",
-        "message": "Gesture engine=legacy_opencv ready"
+        "engine": "mediapipe_landmark",
+        "modelId": "gesture_knn_20260709_144049",
+        "modelDir": "/media/obaid/SSD/my-files/My All Projects/safe-stree-final-2026/backend/ml/data/models/gestures/gesture_knn_20260709_144049",
+        "message": "Gesture engine=mediapipe_landmark ready"
       }
     },
     {
@@ -53,19 +53,19 @@
     },
     {
       "name": "gender",
-      "enabled": true,
+      "enabled": false,
       "ready": true,
-      "state": "ready",
+      "state": "disabled",
       "blocking": false,
-      "message": "Gender runtime ready",
+      "message": "Gender runtime unavailable",
       "setupHint": "Gender models: path=data/models/openvino/face-detection-retail-0004, ; set GENDER_MODEL_PATH / FACE_MODEL_PATH / GENDER_ENGINE; run python scripts/setup_gender_models.py",
       "details": {
-        "enabled": true,
-        "ready": true,
-        "engine": "openvino",
+        "enabled": false,
+        "ready": false,
+        "engine": "disabled",
         "modelPath": "data/models/openvino/age-gender-recognition-retail-0013",
         "faceModelPath": "data/models/openvino/face-detection-retail-0004",
-        "message": "Gender runtime ready"
+        "message": "Gender runtime unavailable"
       }
     },
     {
@@ -94,7 +94,7 @@
       "details": {
         "message": "Alert snapshot retention set to 7 days",
         "retentionDays": 7,
-        "checked": 0,
+        "checked": 2,
         "deleted": 0
       }
     }
@@ -104,10 +104,10 @@
     "retentionSweep": {
       "imagesDir": "/media/obaid/SSD/my-files/My All Projects/safe-stree-final-2026/backend/ml/data/images",
       "retentionDays": 7,
-      "cutoffEpoch": 1782821955.227917,
-      "checked": 0,
+      "cutoffEpoch": 1783003426.6553624,
+      "checked": 2,
       "deleted": 0,
-      "kept": 0,
+      "kept": 2,
       "protected": 0
     },
     "queue": {
