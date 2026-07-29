@@ -44,3 +44,9 @@ ml/data/cache/pending_alerts.jsonl
 *.bin
 *.xml
 *.task
+
+# Runtime-generated images (private/personal data - never commit)
+ml/data/images/
+api/public/cctv_sos/
+api/public/user_imgs/
+api/public/web_sos/
