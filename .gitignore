@@ -50,3 +50,12 @@ ml/data/images/
 api/public/cctv_sos/
 api/public/user_imgs/
 api/public/web_sos/
+
+# Runtime cache (live location data, retry queues, health reports)
+ml/data/cache/
+
+# Logs (fix for nested paths not caught by root-level 'logs' rule)
+api/logs/
+
+# Test coverage reports (generated output)
+api/coverage/
